@@ -1,1 +1,353 @@
 
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sarkari Darpan Admin</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:#f1f5f9;
+  color:#172033;
+}
+header{
+  background:#123b70;
+  color:white;
+  padding:20px;
+  text-align:center;
+}
+.container{
+  max-width:850px;
+  margin:25px auto;
+  padding:15px;
+}
+.card{
+  background:white;
+  padding:22px;
+  border-radius:12px;
+  margin-bottom:20px;
+  box-shadow:0 3px 12px #0001;
+}
+h2{color:#123b70}
+input,textarea{
+  width:100%;
+  padding:13px;
+  margin:8px 0 15px;
+  border:1px solid #ccd3df;
+  border-radius:7px;
+  font-size:16px;
+}
+button{
+  background:#1263bd;
+  color:white;
+  border:0;
+  padding:12px 18px;
+  border-radius:7px;
+  font-size:16px;
+  cursor:pointer;
+}
+.delete{background:#dc2626}
+.logout{background:#475569}
+.job{
+  border:1px solid #ddd;
+  padding:15px;
+  border-radius:8px;
+  margin-top:12px;
+}
+.hidden{display:none}
+#message{margin:12px 0;color:#b42318}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>Sarkari Darpan</h1>
+<p>Admin Dashboard</p>
+</header>
+
+<div class="container">
+
+<div class="card" id="loginBox">
+<h2>Admin Login</h2>
+
+<form id="loginForm">
+<input id="email" type="email"
+placeholder="Admin Email" required>
+
+<input id="password" type="password"
+placeholder="Password" required>
+
+<button type="submit">Login</button>
+</form>
+
+<p id="message"></p>
+</div>
+
+<div id="dashboard" class="hidden">
+
+<div class="card">
+<h2>Welcome Admin</h2>
+<button class="logout" id="logoutBtn">Logout</button>
+</div>
+
+<div class="card">
+<h2>Add Government Job</h2>
+
+<form id="jobForm">
+
+<input id="title"
+placeholder="Job Title" required>
+
+<input id="organization"
+placeholder="Organization Name" required>
+
+<input id="lastDate"
+type="date" required>
+
+<input id="applyUrl"
+type="url"
+placeholder="Official Apply Link" required>
+
+<textarea id="description"
+placeholder="Job Details"
+rows="5" required></textarea>
+
+<button type="submit">Publish Job</button>
+</form>
+
+<p id="jobMessage"></p>
+</div>
+
+<div class="card">
+<h2>Published Jobs</h2>
+<div id="jobList">Loading...</div>
+</div>
+
+</div>
+</div>
+
+<script type="module">
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+
+import {
+ getAuth,
+ signInWithEmailAndPassword,
+ signOut,
+ onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+import {
+ getFirestore,
+ collection,
+ addDoc,
+ deleteDoc,
+ doc,
+ onSnapshot,
+ serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+
+// Firebase Configuration
+const firebaseConfig = {
+ apiKey: "AIzaSyCkkpML4gde1iyNFB21-G2UB9sgil25j6w",
+ authDomain: "sarkari-darpan-c1adc.firebaseapp.com",
+ projectId: "sarkari-darpan-c1adc",
+ storageBucket: "sarkari-darpan-c1adc.firebasestorage.app",
+ messagingSenderId: "786187994669",
+ appId: "1:786187994669:web:87efa04b6d92f1a1679aa4",
+ measurementId: "G-WRYE211XKP"
+};
+
+// अपना वास्तविक Admin Email यहाँ डालें
+const ADMIN_EMAIL = "YOUR_ADMIN_EMAIL@gmail.com";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const loginBox = document.getElementById("loginBox");
+const dashboard = document.getElementById("dashboard");
+const message = document.getElementById("message");
+const jobList = document.getElementById("jobList");
+
+let unsubscribeJobs = null;
+
+// Login
+document.getElementById("loginForm")
+.addEventListener("submit", async (e) => {
+ e.preventDefault();
+ message.textContent = "Please wait...";
+
+ try {
+  await signInWithEmailAndPassword(
+   auth,
+   document.getElementById("email").value,
+   document.getElementById("password").value
+  );
+ } catch(error) {
+  message.textContent = "Login failed: " + error.message;
+ }
+});
+
+// Authentication Check
+onAuthStateChanged(auth, async (user) => {
+
+ if(user && user.email === ADMIN_EMAIL) {
+
+  loginBox.classList.add("hidden");
+  dashboard.classList.remove("hidden");
+  message.textContent = "";
+
+  loadJobs();
+
+ } else {
+
+  if(unsubscribeJobs) unsubscribeJobs();
+  unsubscribeJobs = null;
+
+  dashboard.classList.add("hidden");
+  loginBox.classList.remove("hidden");
+
+  if(user) {
+   await signOut(auth);
+   message.textContent = "Unauthorized Admin!";
+  }
+ }
+});
+
+// Add Job
+document.getElementById("jobForm")
+.addEventListener("submit", async (e) => {
+
+ e.preventDefault();
+
+ const jobMessage = document.getElementById("jobMessage");
+ jobMessage.textContent = "Publishing...";
+
+ try {
+
+  const user = auth.currentUser;
+
+  if(!user || user.email !== ADMIN_EMAIL) {
+   throw new Error("Admin login required");
+  }
+
+  const url = new URL(
+   document.getElementById("applyUrl").value
+  );
+
+  if(url.protocol !== "https:") {
+   throw new Error("HTTPS link required");
+  }
+
+  await addDoc(collection(db,"jobs"), {
+
+   title: document.getElementById("title").value,
+   organization: document.getElementById("organization").value,
+   lastDate: document.getElementById("lastDate").value,
+   applyUrl: url.href,
+   description: document.getElementById("description").value,
+   createdAt: serverTimestamp()
+
+  });
+
+  document.getElementById("jobForm").reset();
+  jobMessage.textContent = "Job published successfully!";
+
+ } catch(error) {
+  jobMessage.textContent = error.message;
+ }
+});
+
+// Load Jobs
+function loadJobs() {
+
+ if(unsubscribeJobs) unsubscribeJobs();
+
+ unsubscribeJobs = onSnapshot(
+  collection(db,"jobs"),
+
+  (snapshot) => {
+
+   jobList.replaceChildren();
+
+   if(snapshot.empty) {
+    jobList.textContent = "No jobs published yet.";
+    return;
+   }
+
+   snapshot.forEach((item) => {
+
+    const job = item.data();
+
+    const box = document.createElement("div");
+    box.className = "job";
+
+    const title = document.createElement("h3");
+    title.textContent = job.title || "";
+
+    const org = document.createElement("p");
+    org.textContent = "Organization: " + (job.organization || "");
+
+    const date = document.createElement("p");
+    date.textContent = "Last Date: " + (job.lastDate || "");
+
+    const description = document.createElement("p");
+    description.textContent = job.description || "";
+
+    const link = document.createElement("a");
+    link.href = job.applyUrl || "#";
+    link.textContent = "Apply Link";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+
+    const del = document.createElement("button");
+    del.textContent = "Delete Job";
+    del.className = "delete";
+
+    del.addEventListener("click", async () => {
+
+     if(confirm("Delete this job?")) {
+
+      try {
+       await deleteDoc(doc(db,"jobs",item.id));
+      } catch(error) {
+       alert(error.message);
+      }
+
+     }
+
+    });
+
+    box.append(title,org,date,description,link,
+      document.createElement("br"),del);
+
+    jobList.appendChild(box);
+
+   });
+
+  },
+
+  (error) => {
+   jobList.textContent = "Database error: " + error.message;
+  }
+ );
+}
+
+// Logout
+document.getElementById("logoutBtn")
+.addEventListener("click", async () => {
+ await signOut(auth);
+});
+
+</script>
+
+</body>
+</html>
+
